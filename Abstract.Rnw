@@ -1,0 +1,5 @@
+Bayesian Hierarchical Models and Influenza Modeling
+
+Influenza is a common illness which affects most people at some point in their lives. At best, a minor inconvenience, but as seen in the current winter season, influenza can lead to serious health problems including death especially among the young, the elderly and pregnant women. This season has highlighted the importance of being able to understand and predict the influenza season and hopefully, outbreaks. In this presentation, a Bayesian Hierarchical structure in conjunction with an Asymmetrical Gaussian mean is used to model the influenza season. This model is compared to a models using similar hierarchical structures with a different mean forms as well as a vague prior model. This presentation will also compare forecasting abilities of the different models.
+
+
