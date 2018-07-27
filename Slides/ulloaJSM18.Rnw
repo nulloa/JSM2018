@@ -1,7 +1,7 @@
-% \documentclass[handout]{beamer}
-\documentclass{beamer}
+\documentclass[handout]{beamer}
+% \documentclass{beamer}
 
-\usepackage{verbatim,multicol,amsmath,graphics}
+\usepackage{verbatim,multicol,amsmath,graphics, hyperref}
 \setlength{\columnsep}{1cm}
 
 \input{frontmatter}
@@ -27,13 +27,72 @@
 library("fludata")
 library("cdcfluview")
 library("rstan")
-library("dplyr")
 library("knitr")
 library("ggplot2")
+library("xtable")
+library("loo")
+library("dplyr")
 @
 
 <<set_seed, echo=FALSE>>=
 set.seed(2)
+@
+
+
+<<res_setup, echo=FALSE, cache=TRUE, warning=FALSE, message=FALSE>>=
+dat <- data.frame(y=OG$dat$y,
+                  week=OG$dat$x,
+                  num=OG$dat$num,
+                  group=OG$dat$og_group,
+                  seas=OG$dat$og_seas)
+
+load("~/Downloads/ForecastRdata/Common_OG.RData")
+load("~/Downloads/ForecastRdata/GroupCS_OG.RData")
+load("~/Downloads/ForecastRdata/Indep_OG.RData")
+
+res_common   <- extract(Common_OG)
+res_vague    <- extract(Indep_OG)
+res_groupCS  <- extract(GroupCS_OG)
+
+###### Comparison via WAIC and LOO #####
+ll_Common      <- extract_log_lik(Common_OG)
+ll_Vague       <- extract_log_lik(Indep_OG)
+ll_LKJGroupCS  <- extract_log_lik(GroupCS_OG)
+
+waicCommon <- waic(ll_Common)
+waicVague  <- waic(ll_Vague)
+waicGroupCS <- waic(ll_LKJGroupCS)
+
+
+get_res <- function(y, week, num, group, seas, res, model){
+  resdat = data.frame(week = week, num = num, y = y, group = group, seas = seas, model = model)
+  resdat$est <- resdat$upper <- resdat$lower <- resdat$pred <- resdat$pred_upper <- resdat$pred_lower <- MSE <- NA
+  binoms <- matrix(data=NA, nrow=nrow(res$lpsi), ncol=nrow(resdat))
+  for(i in 1:nrow(resdat)){
+    # Est of mean
+    resdat$est[i]   <- median(boot::inv.logit(res$lpsi[,i]))
+    resdat$lower[i] <- quantile(boot::inv.logit(res$lpsi[,i]), probs=c(0.025))
+    resdat$upper[i] <- quantile(boot::inv.logit(res$lpsi[,i]), probs=c(0.975))
+    # Predictios
+    binoms[,i] <- rbinom(length(res$lpsi[,i]), resdat$num[i], boot::inv.logit(res$lpsi[,i]))
+    resdat$pred[i]       <- median(binoms[,i])
+    resdat$pred_lower[i] <- quantile(binoms[,i], probs=c(0.025))
+    resdat$pred_upper[i] <- quantile(binoms[,i], probs=c(0.975))
+  }
+  
+  for(m in 1:nrow(res$lpsi)){
+    MSE[m] <- mean((binoms[m,] - resdat$y)^2)
+  }
+  
+  return(list(resdat = resdat, MSE = MSE))
+}
+
+resCommon   <- get_res(dat$y, dat$week, dat$num, dat$group, dat$seas, res_common, "Common")
+resVague    <- get_res(dat$y, dat$week, dat$num, dat$group, dat$seas, res_vague, "Indep")
+resGroupCS  <- get_res(dat$y, dat$week, dat$num, dat$group, dat$seas, res_groupCS, "RegMnSd")
+
+cdat <- rbind(resCommon$resdat,resVague$resdat,resGroupCS$resdat)
+cdat <- subset(cdat, seas=="15-16" & (group=="Region 9" | group=="Region 7"))
 @
 
 \begin{document}
@@ -59,12 +118,10 @@ set.seed(2)
 
 \begin{itemize}[<+->]
 \item An acute viral infection which attacks the respiratory system
-\item Three to five million cases result in severe illness
-\item Three hundred thousand to six hundred and fifty thousand result in death
-\item Especially vunerable are the young, elderly and pregnant women
-\item In the United States, it causes a significant economic and resource burden on the healthcare system
+\item Approx $4,000,000$ cases annually result in severe illness
+\item Approx $400,000$ annual deaths
+\item Causes a significant economic and resource burden on the healthcare system
 \item Vaccines are a simple and effective way of preventing the spread of influenza
-\item Goal: understand and predict the Influenza season
 \end{itemize}
 
 \end{frame}
@@ -77,25 +134,24 @@ set.seed(2)
 % Slide 2
 
 \section{Data}
-\begin{frame}
+\begin{frame}[fragile]
 \frametitle{Data}
 
 \begin{itemize}[<+->]
 \item U.S. Outpatient Influenza-like Illness Surveillance Network (ILINet) via Centers for Disease Control and Prevention (CDC)
-\item Seasons 2006-Present (2010 - 2014)
-\item Influenza season spans Morbidity and Mortality Weekly Report (MMWR) weeks 40-20
-\item United States split into 10 Regions
+\item Influenza season spans Morbidity and Mortality Weekly Report (MMWR) weeks 40-20; Seasons 2006-Present (2010 - 2015)
+\item Here's Region 7 (Iowa, Kansas, Missouri, and Nebraska)
 \end{itemize}
 
 \pause
 
-\begin{figure}[!ht]
-  \includegraphics[width=0.73\linewidth]{Figures/cdcRegionSingleSeasonPlot.png}
-  \caption{%The number of patients who exhibited Influenza like symptoms during the $2012-2013$ Season faceted by region. There a great diversity in distributional features; each region has a unique set of features which make there seasonal curve look unique.
-  }
-  \label{fig:cdcSingleSeason}
-\end{figure}
-
+<<season_plot, echo=FALSE, warnings=FALSE, messages=FALSE, fig.show='asis', fig.height=2.5, fig.width=7.5, cache=TRUE>>=
+seas_dat <- get_cdc_data(2016)
+seas_dat <- subset(seas_dat, region=="Region 7")
+ggplot(seas_dat) + 
+  geom_point(aes(x=week, y=TotILI, size=TotPat), shape=1) + 
+  labs(x="Week", y="ILI Count", size="Pop Count")
+@
 
 \end{frame}
 
@@ -113,15 +169,6 @@ set.seed(2)
 \begin{itemize}[<+->]
 \item First introduced by Fechner in {\it Kollek-tivasslehre} in 1897 (Wallis 2015)
 \item Idea was to compose a distribution from the left half of a $N(\mu, \sigma_1^2)$ and the right half of a  $N(\mu, \sigma_2^2)$
-
-\begin{equation*} \label{eq:ASGdist}
-f_{X}(x|\dots) = 
-  \begin{cases}
-    \frac{1}{\sqrt{2\pi}(\sigma_1 + \sigma_2)/2} \: exp[-(x - \mu)^2 / 2\sigma^2_{1} ] & \quad x \leq \mu \\
-    \frac{1}{\sqrt{2\pi}(\sigma_1 + \sigma_2)/2} \: exp[-(x - \mu)^2 / 2\sigma^2_{2} ] & \quad x \geq \mu 
-  \end{cases}
-\end{equation*}
-
 \item Change form of the scaling factor to something borrowed from Werker and Jaggard (1997)
 
 \begin{equation*} \label{eq:ASGff}
@@ -154,6 +201,7 @@ ASG(w|\dots) =
 
 
 
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%% Model %%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -169,63 +217,26 @@ The full model can be written as follows: \pause
 y_{wrs} &\overset{ind}{\sim} Bin(n_{wrs}, \phi_{wrs})  \\
 logit(\phi_{wrs}) &= f(\theta_{rs}) \\
 \theta_{rs} &\overset{ind}{\sim} N(\mu_{r}, \Delta_{r} \Omega \Delta_{r}) \\
-\mu_{r} &\overset{ind}{\sim} N(\mu, \Delta \Omega \Delta) \\
-\Delta_r &= diag(\sigma_{r,1}, \cdots)  \\ 
-\sigma_{r,i} &\overset{ind}{\sim} t^{+}_{4}(a,b) \\
-\mu &\overset{ind}{\sim} N(m_0, C_0)  \\
-\Delta &= diag(\sigma_{1}, \cdots)  \\ 
-\sigma_i &\overset{ind}{\sim} t^{+}_{4}(c,d) \\
-\Omega &\overset{ind}{\sim} LKJ(n) 
+% \mu_{r} &\overset{ind}{\sim} N(\mu, \Delta \Omega \Delta) \\
+% \Delta_r &= diag(\sigma_{r,1}, \cdots)  \\ 
+% \sigma_{r,i} &\overset{ind}{\sim} t^{+}_{4}(a,b) \\
+% \mu &\overset{ind}{\sim} N(m_0, C_0)  \\
+% \Delta &= diag(\sigma_{1}, \cdots)  \\ 
+% \sigma_i &\overset{ind}{\sim} t^{+}_{4}(c,d) \\
+% \Omega &\overset{ind}{\sim} LKJ(n) 
 \end{align*}
 
-\end{frame}
 
-
-% Slide 6
-
-\section{Model}
-\begin{frame}
-\frametitle{Hierarchy Structure}
-Which Hierarchy structure best represents the data?
-
-Some different hierachies to consider:
-\begin{multicols}{2}
-\begin{itemize}
-\item SasMnSd
-\begin{equation*} \label{eq:seasonmod}
-\theta_{rs} \overset{ind}{\sim} N(\mu_{s}, \Delta_{s} \Omega \Delta_{s})
+\begin{equation*}
+  \begin{aligned}
+      \mu_{r} &\overset{ind}{\sim} N(\mu, \Delta \Omega \Delta) & \mu &\overset{ind}{\sim} N(m_0, C_0)  \\
+      \Delta_r &= diag(\sigma_{r,1}, \cdots) & \Delta &= diag(\sigma_{1}, \cdots)  \\ 
+      \sigma_{r,i} &\overset{ind}{\sim} t^{+}_{4}(a,b) & \sigma_i &\overset{ind}{\sim} t^{+}_{4}(c,d) \\
+      & & \Omega &\overset{ind}{\sim} LKJ(n)
+    \end{aligned}
 \end{equation*}
 
-\pause
 
-\item SeasMean
-\begin{equation*} \label{eq:simplemod}
-\theta_{rs} \overset{ind}{\sim} N(\mu_{s}, \Delta \Omega \Delta)
-\end{equation*}
-
-\pause
-
-\item RegMean
-\begin{equation*} \label{eq:simplemodreg}
-\theta_{rs} \overset{ind}{\sim} N(\mu_{r}, \Delta \Omega \Delta)
-\end{equation*}
-
-\pause
-
-\item RegMnSeasSd
-\begin{equation*} \label{eq:mixmod}
-\theta_{rs} \overset{ind}{\sim} N(\mu_{r}, \Delta_{s} \Omega \Delta_{s})
-\end{equation*}
-
-\pause
-
-\item SeasMnRegSd
-\begin{equation*} \label{eq:mix2mod}
-\theta_{rs} \overset{ind}{\sim} N(\mu_{r}, \Delta_{s} \Omega \Delta_{s})
-\end{equation*}
-
-\end{itemize}
-\end{multicols}
 \end{frame}
 
 
@@ -241,8 +252,8 @@ Some different hierachies to consider:
 \frametitle{Inference}
 Two big questions: \pause
 \begin{itemize}
-\item Do you need the Assymetrical Guassian component?\pause
-\item Which hiearchy structure preforms better?
+\item Do you need the Asymmetrical Gaussian component?\pause
+\item Does this work?
 \end{itemize}
 
 \end{frame}
@@ -250,23 +261,23 @@ Two big questions: \pause
 % Slide 8
 
 \begin{frame}
-\frametitle{Do you really need the Assymetrical Guassian component?}
+\frametitle{Do you really need the Asymmetrical Gaussian component?}
 \pause
-To check whether we do or not, we used posterior p-values:\pause
+To check whether we do or not, we used posterior probabilities:\pause
 \begin{align*}
-p(\beta_1 > \beta_2|y) &= \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big(\beta_1^{(i)} > \beta_2^{(i))}\big) \\
-p(\sigma_1 > \sigma_2|y) &= \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big( \sigma_1^{(i)} > \sigma_2^{(i)}\big)
+P(\beta_1 > \beta_2|y) &\approx \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big(\beta_1^{(i)} > \beta_2^{(i))}\big) \\
+P(\sigma_1 > \sigma_2|y) &\approx \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big( \sigma_1^{(i)} > \sigma_2^{(i)}\big)
 \end{align*}
 
 \pause
 
-If $\beta_1$ and $\beta_2$, and $\sigma_1$ and $\sigma_2$, are really not different then the posterior p-values will hang out around $0$, but if they hang out around the boundaries, then we need the flexibility.
+If $\beta_1$ and $\beta_2$, and $\sigma_1$ and $\sigma_2$, are really not different then the posterior probabilities will hang out around $0.5$, but if they hang out around the boundaries, then we need the flexibility.
 \end{frame}
 
 % Slide 9
 
 \begin{frame}
-\frametitle{Do you really need the Assymetrical Guassian component?}
+\frametitle{Do you really need the Asymmetrical Gaussian component?}
 \vspace{-3mm}
 \begin{figure}[!ht]
   \includegraphics[width=0.85\linewidth]{Figures/PosteriorProbBeta.png}
@@ -277,156 +288,64 @@ If $\beta_1$ and $\beta_2$, and $\sigma_1$ and $\sigma_2$, are really not differ
 \end{frame}
 
 
+\begin{frame}[fragile]
+\frametitle{Does it work?}
+
+Results for Regions 7 and 9 in the $15-16$ Influenza Season:
+
+<<res_plot, echo=FALSE, fig.show='asis', fig.height=4.5, fig.width=7.5>>=
+ggplot(subset(cdat, model=="RegMnSd")) + 
+  geom_point(aes(x=week, y=y/num, size=num), shape=1) + 
+  geom_line(aes(x=week, y=est)) + 
+  geom_ribbon(aes(x=week, ymin=lower, ymax=upper), alpha=0.1) + 
+  facet_wrap(~group)+
+  theme_bw() + labs(x="Week", y="ILI Percentage")
+@
+
+\end{frame}
+
+
 % Slide 10
-\begin{frame}
-\frametitle{Which hiearchy structure preforms better?}
+% \begin{frame}[fragile]
+% \frametitle{Does it work?}
+% 
+% Comparing MSE and WAIC for the models:
+% 
+% <<MSE_plot, echo=FALSE, fig.show='asis', fig.height=3.5, fig.width=7.5>>=
+% resdf <- data.frame(MSE=c(mean((subset(cdat, model=="Common")$pred - subset(cdat, model=="Common")$y)^2),
+%                           mean((subset(cdat, model=="Indep")$pred - subset(cdat, model=="Indep")$y)^2),
+%                           mean((subset(cdat, model=="RegMnSd")$pred - subset(cdat, model=="RegMnSd")$y)^2)
+% ))
+% 
+% resdf$WAIC <- c(waicCommon$waic, waicVague$waic, waicGroupCS$waic)
+% resdf <- t(resdf)
+% colnames(resdf) <- c("Common", "Indep", "RegMnSd")
+% 
+% mresdf <- reshape2::melt(resdf)
+% ggplot(subset(mresdf, Var2!="Common")) + 
+%   geom_point(aes(x="none", y=value, color=Var2)) + 
+%   facet_wrap(~Var1, scales="free_y") + labs(y="", color="Model", x="") + 
+%   theme(axis.text.x=element_blank(),
+%         axis.ticks.x=element_blank())
+% @
+% 
+% \begin{table}[ht] \label{tab:mse}
+% \centering
+% \resizebox{\linewidth}{!}{%
+% \begin{tabular}{rrrrrrrrr}
+%   \hline
+%  & Common & Indep & RegMnSd \\
+%   \hline
+% MSE & 837351.69 & 1565.73 & 70.76  \\
+%   WAIC & 956884.13 & 1392.37 & 72.08 \\
+%    \hline
+% \end{tabular}
+% %\caption{This table compares the different hierarchy structres accross MSE and WAIC; the minimum value of each statistic has been subtracted from each row to make comparisons easier. The hierarchy structure using a region means outpreforms the rest as seen via MSE though when taking into consideration model complexity via WAIC, it just slightly outpreforms the vague model.}
+% }
+% \end{table}
+% 
+% \end{frame}
 
-We calculated MSE and WAIC for all the hierarchy structures and compared them.
-\pause
-\begin{table}[ht] \label{tab:mse}
-\centering
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{rrrrrrrrr}
-  \hline
- & Common & Indep & RegMn & RegMnSd & SeasMn & SeasMnSD & RegMnSeasSd & SeasMnRegSd \\ 
-  \hline
-MSE & 837351.69 & 1565.73 & 53.41 & 70.76 & 68.82 & 0.00 & 247.75 & 11.28 \\ 
-  WAIC & 956884.13 & 1392.37 & 1151.44 & 72.08 & 14.59 & 0.00 & 403.56 & 47.47 \\ 
-   \hline
-\end{tabular}
-%\caption{This table compares the different hierarchy structres accross MSE and WAIC; the minimum value of each statistic has been subtracted from each row to make comparisons easier. The hierarchy structure using a region means outpreforms the rest as seen via MSE though when taking into consideration model complexity via WAIC, it just slightly outpreforms the vague model.}
-}
-\end{table}
-
-\pause
-
-Found the structure with region means reforms the ``best'' via MSE but with WAIC, the models including a standard deviation preform the best.
-
-\end{frame}
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%% Res: Forecasting %%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% Slide 11
-\begin{frame}[fragile]
-\frametitle{Forecasting}
-
-How does the model preform in forecasting? \pause Good!
-
-<<3wkfc, echo=FALSE, warnings=FALSE, messages=FALSE, fig.show='asis', fig.height=4.5, fig.width=7.5, cache=TRUE>>=
-file_names=as.list(dir(path="~/Downloads/ForecastRdata",pattern="_FC",full.names=TRUE))
-file_names=file_names[grep("FC3", file_names)]
-invisible(lapply(file_names, load, environment(), verbose=FALSE))
-
-fc3_vague    <- extract(Indep_FC3)
-fc3_simpleCS <- extract(SimpleCS_FC3)
-fc3_groupCS  <- extract(GroupCS_FC3)
-fc3_simpleSC <- extract(SimpleSC_FC3)
-fc3_groupSC  <- extract(GroupSC_FC3)
-fc3_groupMix <- extract(Mix_FC3)
-fc3_groupMix2 <- extract(Mix2_FC3)
-
-asg <- Vectorize(function(x, beta1, beta2, mu, h, sigma1, sigma2){
-  top <- beta1 + (h - beta1)*exp(-((x - mu)^2)/(2*sigma1^2))
-  bot <- beta2 + (h - beta2)*exp(-((x - mu)^2)/(2*sigma2^2))
-  ifelse(x < mu,return(top),return(bot))
-})
-
-forecastres <- function(mcmc, numseas, numgroup, iter, model){
-  if(exists(as.character(substitute(mcmc)))!=TRUE){
-    message(paste(as.character(substitute(mcmc))," is missing… :-("))
-  }
-  weeks <- 1:33
-  group <- NA
-  preds <- matrix(data=NA, ncol=33, nrow=iter)
-  mpred <- upred <- lpred <- matrix(data=NA, ncol=33, nrow=numgroup)
-  for(g in 1:numgroup){
-    for(i in 1:iter){
-      preds[i,] <- asg(x=weeks, mu=mcmc$ctheta[i,g,numseas,4], h=mcmc$ctheta[i,g,numseas,3], 
-                            beta1=mcmc$ctheta[i,g,numseas,1], beta2=mcmc$ctheta[i,g,numseas,2], 
-                            sigma1=exp(mcmc$ctheta[i,g,numseas,5]), sigma2=exp(mcmc$ctheta[i,g,numseas,6]))
-      # if(sum(boot::inv.logit(preds[i,]) > .5)>1){print(paste("This group-iter", i, g))}
-    }
-    group[g]  <- paste("Region", g)
-    mpred[g,] <- colMeans(preds)
-    upred[g,] <- apply(preds, 2, quantile, probs = c(0.975),  na.rm = TRUE) 
-    lpred[g,] <- apply(preds, 2, quantile, probs = c(0.025),  na.rm = TRUE) 
-  }
-  return(data.frame(weeks=rep(weeks, numgroup),
-                    group=rep(group, each=length(weeks)),
-                    meanForecast=boot::inv.logit(as.vector(t(mpred))),
-                    upperForecast=boot::inv.logit(as.vector(t(upred))),
-                    lowerForecast=boot::inv.logit(as.vector(t(lpred))),
-                    model=model))
-}
-
-fc3Vague     <- forecastres(fc3_vague,    numseas=9, numgroup=10,  iter=2000, "Indep")
-fc3SimpleCS  <- forecastres(fc3_simpleCS, numseas=9, numgroup=10,  iter=2000, "RegMn")
-fc3GroupCS   <- forecastres(fc3_groupCS,  numseas=9, numgroup=10,  iter=2000, "RegMnSd")
-fc3SimpleSC  <- forecastres(fc3_simpleSC, numseas=9, numgroup=10,  iter=2000, "SeasMn")
-fc3GroupSC   <- forecastres(fc3_groupSC,  numseas=9, numgroup=10,  iter=2000, "SeasMnSd")
-fc3GroupMix  <- forecastres(fc3_groupMix, numseas=9, numgroup=10,  iter=2000, "RegMnSeasSd")
-fc3GroupMix2 <- forecastres(fc3_groupMix2, numseas=9, numgroup=10,  iter=2000, "SeasMnRegSd")
-
-fc3 <- rbind(fc3Vague,fc3SimpleCS,fc3GroupCS,fc3SimpleSC,fc3GroupSC,fc3GroupMix,fc3GroupMix2)
-fc3$fclength <- "3 Weeks"
-fc3 <- merge(fc3, get_cdc_data(2016), by.x = c("weeks", "group"), by.y = c("week", "region"))
-
-ggplot(subset(rbind(fc3), model!="Indep")) + geom_point(aes(x=weeks, y=ILIPer/100)) + 
-  geom_line(aes(x=weeks, y=meanForecast, color=model)) + 
-  geom_ribbon(aes(x=weeks, ymin=lowerForecast, ymax=upperForecast, fill=model), alpha=0.1) +  
-  facet_wrap(~group, scales = "free", nrow=2) + 
-  theme_bw() + labs(x="Week", y="ILI Percentage",color="Model", fill="Model")
-
-@
-
-
-\end{frame}
-
-
-% Slide 12
-\begin{frame}[fragile]
-\frametitle{Forecasting}
-
-And bad \pause
-
-<<10wkfc, echo=FALSE, warnings=FALSE, messages=FALSE, fig.show='asis', fig.height=4.5, fig.width=7.5, cache=TRUE>>=
-file_names=as.list(dir(path="~/Downloads/ForecastRdata",pattern="_FC",full.names=TRUE))
-file_names=file_names[grep("FC10", file_names)]
-invisible(lapply(file_names, load, environment(), verbose=FALSE))
-
-fc10_vague    <- extract(Indep_FC10)
-fc10_simpleCS <- extract(SimpleCS_FC10)
-fc10_groupCS  <- extract(GroupCS_FC10)
-fc10_simpleSC <- extract(SimpleSC_FC10)
-fc10_groupSC  <- extract(GroupSC_FC10)
-fc10_groupMix <- extract(Mix_FC10)
-fc10_groupMix2 <- extract(Mix2_FC10)
-
-fc10Vague     <- forecastres(fc10_vague,    numseas=9, numgroup=10,  iter=2000, "Indep")
-fc10SimpleCS  <- forecastres(fc10_simpleCS, numseas=9, numgroup=10,  iter=2000, "RegMn")
-fc10GroupCS   <- forecastres(fc10_groupCS,  numseas=9, numgroup=10,  iter=2000, "RegMnSd")
-fc10SimpleSC  <- forecastres(fc10_simpleSC, numseas=9, numgroup=10,  iter=2000, "SeasMn")
-fc10GroupSC   <- forecastres(fc10_groupSC,  numseas=9, numgroup=10,  iter=2000, "SeasMnSd")
-fc10GroupMix  <- forecastres(fc10_groupMix, numseas=9, numgroup=10,  iter=2000, "RegMnSeasSd")
-fc10GroupMix2 <- forecastres(fc10_groupMix2, numseas=9, numgroup=10,  iter=2000, "SeasMnRegSd")
-
-fc10 <- rbind(fc10Vague,fc10SimpleCS,fc10GroupCS,fc10SimpleSC,fc10GroupSC,fc10GroupMix,fc10GroupMix2)
-fc10$fclength <- "10 Weeks"
-fc10 <- merge(fc10, get_cdc_data(2016), by.x = c("weeks", "group"), by.y = c("week", "region"))
-
-ggplot(subset(rbind(fc10), model!="Indep")) + geom_point(aes(x=weeks, y=ILIPer/100)) +
-  geom_line(aes(x=weeks, y=meanForecast, color=model)) +
-  geom_ribbon(aes(x=weeks, ymin=lowerForecast, ymax=upperForecast, fill=model), alpha=0.1) +
-  facet_wrap(~group, scales = "free", nrow=2) +
-  theme_bw() + labs(x="Week", y="ILI Percentage",color="Model", fill="Model")
-
-@
-
-
-\end{frame}
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -435,13 +354,14 @@ ggplot(subset(rbind(fc10), model!="Indep")) + geom_point(aes(x=weeks, y=ILIPer/1
 
 % Slide 13
 \begin{frame}
-\frametitle{Final Thoughts}
+\frametitle{Final/Future Thoughts}
 
 \begin{itemize}[<+->]
-\item Assymetrical Gaussian component is needed and beneficial
-\item Hiearchy structures are beneficial for forecasting (some of the time)
-\item Not clear why hiearchy structure doesn't bind the forecats more
-\item Can be some difficulties with fitting non-linear component
+\item Asymmetrical Gaussian is fun and flexible \\
+\item Asymmetrical Gaussian component is needed and beneficial \\
+\item Hierarchy structures are good \\
+\item Different hierarchy structures possible \\
+\item Focus more on forecasting \\
 \end{itemize}
 
 \end{frame}
