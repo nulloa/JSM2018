@@ -1,5 +1,5 @@
-\documentclass[handout]{beamer}
-% \documentclass{beamer}
+% \documentclass[handout]{beamer}
+\documentclass{beamer}
 
 \usepackage{verbatim,multicol,amsmath,graphics, hyperref}
 \setlength{\columnsep}{1cm}
@@ -139,14 +139,14 @@ cdat <- subset(cdat, seas=="15-16" & (group=="Region 9" | group=="Region 7"))
 
 \begin{itemize}[<+->]
 \item U.S. Outpatient Influenza-like Illness Surveillance Network (ILINet) via Centers for Disease Control and Prevention (CDC)
-\item Influenza season spans Morbidity and Mortality Weekly Report (MMWR) weeks 40-20; Seasons 2006-Present (2010 - 2015)
+\item Influenza season spans Morbidity and Mortality Weekly Report (MMWR) weeks 40-20; Seasons 2006-Present
 \item Here's Region 7 (Iowa, Kansas, Missouri, and Nebraska)
 \end{itemize}
 
 \pause
 
 <<season_plot, echo=FALSE, warnings=FALSE, messages=FALSE, fig.show='asis', fig.height=2.5, fig.width=7.5, cache=TRUE>>=
-seas_dat <- get_cdc_data(2016)
+seas_dat <- subset(OG$df, Season=="15-16")
 seas_dat <- subset(seas_dat, region=="Region 7")
 ggplot(seas_dat) + 
   geom_point(aes(x=week, y=TotILI, size=TotPat), shape=1) + 
@@ -174,8 +174,8 @@ ggplot(seas_dat) +
 \begin{equation*} \label{eq:ASGff}
 ASG(w|\dots) = 
   \begin{cases}
-    \beta_{1} + (\nu - \beta_{1}) \: exp[-(w - \mu)^2 / 2\sigma^2_{1} ] & \quad w < \mu \\
-    \beta_{2} + (\nu - \beta_{2}) \: exp[-(w - \mu)^2 / 2\sigma^2_{2} ] & \quad w \geq \mu 
+    \beta_{1} + (\eta - \beta_{1}) \: exp[-(w - \mu)^2 / 2\sigma^2_{1} ] & \quad w < \mu \\
+    \beta_{2} + (\eta - \beta_{2}) \: exp[-(w - \mu)^2 / 2\sigma^2_{2} ] & \quad w \geq \mu 
   \end{cases}
 \end{equation*}
 \end{itemize}
@@ -215,7 +215,7 @@ The full model can be written as follows: \pause
 
 \begin{align*} \label{eq:mainmodel}
 y_{wrs} &\overset{ind}{\sim} Bin(n_{wrs}, \phi_{wrs})  \\
-logit(\phi_{wrs}) &= f(\theta_{rs}) \\
+logit(\phi_{wrs}) &= ASG(w|\theta_{rs}) \\
 \theta_{rs} &\overset{ind}{\sim} N(\mu_{r}, \Delta_{r} \Omega \Delta_{r}) \\
 % \mu_{r} &\overset{ind}{\sim} N(\mu, \Delta \Omega \Delta) \\
 % \Delta_r &= diag(\sigma_{r,1}, \cdots)  \\ 
@@ -252,41 +252,13 @@ logit(\phi_{wrs}) &= f(\theta_{rs}) \\
 \frametitle{Inference}
 Two big questions: \pause
 \begin{itemize}
-\item Do you need the Asymmetrical Gaussian component?\pause
-\item Does this work?
+\item Does this work?\pause
+\item Do you need the Asymmetrical Gaussian component?
 \end{itemize}
 
 \end{frame}
 
 % Slide 8
-
-\begin{frame}
-\frametitle{Do you really need the Asymmetrical Gaussian component?}
-\pause
-To check whether we do or not, we used posterior probabilities:\pause
-\begin{align*}
-P(\beta_1 > \beta_2|y) &\approx \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big(\beta_1^{(i)} > \beta_2^{(i))}\big) \\
-P(\sigma_1 > \sigma_2|y) &\approx \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big( \sigma_1^{(i)} > \sigma_2^{(i)}\big)
-\end{align*}
-
-\pause
-
-If $\beta_1$ and $\beta_2$, and $\sigma_1$ and $\sigma_2$, are really not different then the posterior probabilities will hang out around $0.5$, but if they hang out around the boundaries, then we need the flexibility.
-\end{frame}
-
-% Slide 9
-
-\begin{frame}
-\frametitle{Do you really need the Asymmetrical Gaussian component?}
-\vspace{-3mm}
-\begin{figure}[!ht]
-  \includegraphics[width=0.85\linewidth]{Figures/PosteriorProbBeta.png}
-  \caption{%The plot shows the posterior probabilities that $\beta_1 > \beta_2$ and $\sigma^2_1 > \sigma^2_2$ all season-region combinations for all models. Most of the points are in the corners which is evidence that the parameters are not equal. This shows the need for the flexibility of the asymmetrical Gaussian distribution.
-  }
-  \label{fig:PosteriorProbBeta}
-\end{figure}
-\end{frame}
-
 
 \begin{frame}[fragile]
 \frametitle{Does it work?}
@@ -305,46 +277,140 @@ ggplot(subset(cdat, model=="RegMnSd")) +
 \end{frame}
 
 
-% Slide 10
-% \begin{frame}[fragile]
-% \frametitle{Does it work?}
-% 
-% Comparing MSE and WAIC for the models:
-% 
-% <<MSE_plot, echo=FALSE, fig.show='asis', fig.height=3.5, fig.width=7.5>>=
-% resdf <- data.frame(MSE=c(mean((subset(cdat, model=="Common")$pred - subset(cdat, model=="Common")$y)^2),
-%                           mean((subset(cdat, model=="Indep")$pred - subset(cdat, model=="Indep")$y)^2),
-%                           mean((subset(cdat, model=="RegMnSd")$pred - subset(cdat, model=="RegMnSd")$y)^2)
-% ))
-% 
-% resdf$WAIC <- c(waicCommon$waic, waicVague$waic, waicGroupCS$waic)
-% resdf <- t(resdf)
-% colnames(resdf) <- c("Common", "Indep", "RegMnSd")
-% 
-% mresdf <- reshape2::melt(resdf)
-% ggplot(subset(mresdf, Var2!="Common")) + 
-%   geom_point(aes(x="none", y=value, color=Var2)) + 
-%   facet_wrap(~Var1, scales="free_y") + labs(y="", color="Model", x="") + 
-%   theme(axis.text.x=element_blank(),
-%         axis.ticks.x=element_blank())
-% @
-% 
-% \begin{table}[ht] \label{tab:mse}
-% \centering
-% \resizebox{\linewidth}{!}{%
-% \begin{tabular}{rrrrrrrrr}
-%   \hline
-%  & Common & Indep & RegMnSd \\
-%   \hline
-% MSE & 837351.69 & 1565.73 & 70.76  \\
-%   WAIC & 956884.13 & 1392.37 & 72.08 \\
-%    \hline
-% \end{tabular}
-% %\caption{This table compares the different hierarchy structres accross MSE and WAIC; the minimum value of each statistic has been subtracted from each row to make comparisons easier. The hierarchy structure using a region means outpreforms the rest as seen via MSE though when taking into consideration model complexity via WAIC, it just slightly outpreforms the vague model.}
-% }
-% \end{table}
-% 
-% \end{frame}
+<<param_est, echo=FALSE, cache=TRUE, message=FALSE, warning=FALSE>>=
+
+seasonError <- function(mcmc, dat, model){
+  b1est <- b1u <- b1l <-  b2est <- b2u <- b2l <- ogb1 <- ogb2 <- ogs1 <- ogs2 <- NA
+  s1est <- s1u <- s1l <- s2est <- s2u <- s2l <- group <- season <- NA
+  muest <- mul <- muu <- nuest <- nul <- nuu <- NA
+  k <- 1
+  for(s in 1:length(unique(dat$seas))){
+    for(g in 1:length(unique(dat$group))){
+      group[k] <- paste(unique(dat$group)[g])
+      season[k] <- paste(unique(dat$seas)[s])
+      subdat <- subset(dat, group==unique(dat$group)[g] & seas==unique(dat$seas)[s])
+      subper <- subdat$y/subdat$num
+      ogb1[k] <- mean(head(subper,3))
+      ogb2[k] <- mean(tail(subper,3))
+      ogs1[k] <- var(subper[1:ceiling(length(subper)/2)])
+      ogs2[k] <- var(subper[ceiling(length(subper)/2):length(subper)])
+      # Beta 1
+      b1est[k] <- mean(mcmc$ctheta[, g, s, 1])
+      b1l[k] <- quantile(mcmc$ctheta[, g, s, 1], probs=c(.025))
+      b1u[k] <- quantile(mcmc$ctheta[, g, s, 1], probs=c(.975))
+      # Beta 2
+      b2est[k] <- mean(mcmc$ctheta[, g, s, 2])
+      b2l[k] <- quantile(mcmc$ctheta[, g, s, 2], probs=c(.025))
+      b2u[k] <- quantile(mcmc$ctheta[, g, s, 2], probs=c(.975))
+      # Mu
+      muest[k] <- mean(mcmc$ctheta[, g, s, 4])
+      mul[k] <- quantile(mcmc$ctheta[, g, s, 4], probs=c(.025))
+      muu[k] <- quantile(mcmc$ctheta[, g, s, 4], probs=c(.975))
+      # Nu
+      nuest[k] <- mean(mcmc$ctheta[, g, s, 3])
+      nul[k] <- quantile(mcmc$ctheta[, g, s, 3], probs=c(.025))
+      nuu[k] <- quantile(mcmc$ctheta[, g, s, 3], probs=c(.975))
+      # Sigma 1
+      s1est[k] <- mean(mcmc$ctheta[, g, s, 5])
+      s1l[k] <- quantile(mcmc$ctheta[, g, s, 5], probs=c(.025))
+      s1u[k] <- quantile(mcmc$ctheta[, g, s, 5], probs=c(.975))
+      # Sigma 2
+      s2est[k] <- mean(mcmc$ctheta[, g, s, 6])
+      s2l[k] <- quantile(mcmc$ctheta[, g, s, 6], probs=c(.025))
+      s2u[k] <- quantile(mcmc$ctheta[, g, s, 6], probs=c(.975))
+      k <- k+1
+    }
+  }
+  return(rbind(
+    data.frame(Season=season, Region=group, Act=ogb1, Est=b1est, Lower=b1l, Upper=b1u, Variable="Beta 1", Facet="Beta", Model=model),
+    data.frame(Season=season, Region=group, Act=ogb2, Est=b2est, Lower=b2l, Upper=b2u, Variable="Beta 2", Facet="Beta", Model=model),
+    data.frame(Season=season, Region=group, Act=ogs1, Est=nuest, Lower=nul, Upper=nuu, Variable="Eta", Facet="Eta", Model=model),
+    data.frame(Season=season, Region=group, Act=ogs1, Est=muest, Lower=mul, Upper=muu, Variable="Mu", Facet="Mu", Model=model),
+    data.frame(Season=season, Region=group, Act=ogs1, Est=s1est, Lower=s1l, Upper=s1u, Variable="Sigma 1", Facet="Sigma", Model=model),
+    data.frame(Season=season, Region=group, Act=ogs2, Est=s2est, Lower=s2l, Upper=s2u, Variable="Sigma 2", Facet="Sigma", Model=model)
+    ))
+}
+
+seVague    <- seasonError(res_vague,    dat, "Indep")
+seGroupCS  <- seasonError(res_groupCS,  dat, "RegMnSd")
+
+
+secomb <- rbind(seVague, seGroupCS)
+secomb$Region <- factor(secomb$Region, levels=c(levels(secomb$Region)[1],levels(secomb$Region)[3:10],levels(secomb$Region)[2]))
+
+secomb = subset(secomb, Model="RegMnSd")
+@
+
+
+\begin{frame}[fragile]
+\frametitle{Does it work?}
+
+What does the form tell us about the Influenza seasons:
+
+<<est_plot, echo=FALSE, fig.show='asis', fig.height=4.5, fig.width=7.5>>=
+ggplot(subset(secomb), aes(x=Season, y=Est, colour=Region)) + 
+  # geom_errorbar(aes(ymin=Lower, ymax=Upper), width=.1) +
+  geom_point(shape=1) + facet_wrap(~Variable, scales = "free_y") + 
+  theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+@
+
+\end{frame}
+
+
+
+
+\begin{frame}
+\frametitle{Do you really need the Asymmetrical Gaussian component?}
+\pause
+To check whether we do or not, we used posterior probabilities:\pause
+\begin{align*}
+P(\beta_1 > \beta_2|y) &\approx \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big(\beta_1^{(i)} > \beta_2^{(i))}\big) \\
+P(\sigma_1 > \sigma_2|y) &\approx \frac{1}{n.iter}\sum_{i=1}^{n.iter} I\big( \sigma_1^{(i)} > \sigma_2^{(i)}\big)
+\end{align*}
+
+\pause
+
+If $\beta_1$ and $\beta_2$, and $\sigma_1$ and $\sigma_2$, are really not different then the posterior probabilities will hang out around $0.5$, but if they hang out around the boundaries, then we need the flexibility.
+\end{frame}
+
+% Slide 9
+<<post_prob, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE>>=
+##### Posterior Probability Plots #####
+postprob <- function(mcmc, dat, model){
+  bpp <- spp <- group <- season <- NA
+  k <- 1
+  for(s in 1:dat$nS){
+    for(g in 1:dat$nG){
+      group[k] <- paste("Reg", g)
+      season[k] <- paste0(unique(dat$og_seas)[s])
+      bpp[k] <- mean(mcmc$ctheta[, g, s, 1] > mcmc$ctheta[, g, s, 2])
+      spp[k] <- mean(mcmc$ctheta[, g, s, 5] > mcmc$ctheta[, g, s, 6])
+      k <- k+1
+    }
+  }
+  return(data.frame(Season=season, Region=group, beta_pp=bpp, sigma_pp=spp, Model=model))
+}
+
+# ppCommon   <- postprob(res_common,   dat, "Common")
+ppVague    <- postprob(res_vague,    OG$dat, "Indep")
+ppGroupCS  <- postprob(res_groupCS,  OG$dat, "RegMnSd")
+
+ppcomb <- rbind(ppVague,ppGroupCS)
+ppcomb$Region <- factor(ppcomb$Region, levels=c(levels(ppcomb$Region)[1],levels(ppcomb$Region)[3:10],levels(ppcomb$Region)[2]))
+@
+
+\begin{frame}
+\frametitle{Do you really need the Asymmetrical Gaussian component?}
+
+<<post_prob_plot, echo=FALSE, fig.show='asis', fig.height=4.5, fig.width=7.5>>=
+ggplot(subset(ppcomb, Model=="RegMnSd")) + geom_point(aes(x=beta_pp, y=sigma_pp)) +
+  facet_grid(Season~Region) + coord_fixed() + theme_bw() +
+  xlab(expression(paste("P(", beta[1], ">", beta[2], "|y)"))) +
+  ylab(expression(paste("P(", sigma[1], ">", sigma[2], "|y)"))) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+@
+
+\end{frame}
 
 
 
